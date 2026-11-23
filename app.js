@@ -1,7 +1,7 @@
 ﻿'use strict';
 /* Подход — тренировочный дневник (PWA). Все данные — в localStorage телефона. */
 const KEY = 'podhod.v1';
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const DEFAULT_EX = [
   ['Грудь', ['Жим штанги лёжа', 'Жим гантелей лёжа', 'Жим штанги на наклонной', 'Жим гантелей на наклонной', 'Разводка гантелей', 'Сведение в кроссовере', 'Жим в тренажёре', 'Отжимания на брусьях', 'Отжимания']],
@@ -24,6 +24,12 @@ const MON = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл
 const fmtDate = iso => { const d = new Date(iso); return `${DAYS[d.getDay()]}, ${d.getDate()} ${MON[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : ''}`; };
 const fmtShort = iso => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`; };
 const fmtSec = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONG = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const WDAY = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+const fmtInt = n => Math.round(n).toLocaleString('ru-RU');
+const BK = (p, force) => `<button class="bk" data-act="nav" data-p="${p}"${force ? ' data-force="1"' : ''} aria-label="Назад">‹</button>`;
+const head = (t, back, right = '', force) => `<header class="hd">${back ? BK(back, force) : ''}<h1>${t}</h1>${right}</header>`;
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
 
 /* ---------- данные ---------- */
@@ -32,11 +38,17 @@ function seed() {
     v: 1,
     exercises: DEFAULT_EX.flatMap(([g, list]) => list.map(n => ({ id: uid(), name: n, group: g, rest: null }))),
     workouts: [], templates: [], activeId: null, timer: null,
-    settings: { rest: 90, sound: true, countdown: true },
+    settings: { rest: 90, sound: true, countdown: true, theme: 'light' },
   };
 }
+function migrate(s) {
+  s.templates = s.templates || [];
+  s.settings = { rest: 90, sound: true, countdown: true, ...(s.settings || {}) };
+  if (!['light', 'dark', 'system'].includes(s.settings.theme)) s.settings.theme = 'light';
+  return s;
+}
 function load() {
-  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) { s.templates = s.templates || []; return s; } } catch (e) { }
+  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return migrate(s); } catch (e) { }
   return seed();
 }
 let S = load();
@@ -162,7 +174,7 @@ const tplStartCard = (t, main) => `<button class="card row${main ? ' today' : ''
 function viewStart() {
   const today = new Date().getDay(), todays = tplsFor(today), recent = sorted().slice(0, 4);
   const doneToday = S.workouts.some(w => sameDay(w.date, new Date().toISOString()));
-  let html = '<h1>Тренировка</h1>';
+  let html = head('Тренировка');
   if (S.templates.length) {
     if (todays.length) html += `<h3>Сегодня, ${DAYS[today]}${doneToday ? ' · уже была тренировка' : ' — по плану'}</h3>` + todays.map(t => tplStartCard(t, !doneToday)).join('');
     else { const n = nextPlanned(); html += `<div class="card"><b>Сегодня по плану отдых</b><small>${n ? `Дальше ${n.k === 1 ? 'завтра' : 'в ' + DAYS[n.d]}: ${n.l.map(t => esc(t.name)).join(', ')}` : ''}</small></div>`; }
@@ -182,7 +194,7 @@ function viewStart() {
 
 function viewPlan() {
   const td = new Date().getDay();
-  return `<h1>Программа</h1>
+  return `${head('Программа', 'workout')}
   <div class="week">${WEEK.map(d => `<div class="wd${d === td ? ' on' : ''}"><b>${DAYS[d]}</b><span>${tplsFor(d).map(t => esc(t.name)).join('<br>') || '—'}</span></div>`).join('')}</div>
   ${S.templates.map(t => `<button class="card row" data-act="go" data-to="plan/${t.id}"><div><b>${esc(t.name)}</b><small>${tplDays(t)} · ${t.items.length} упр.</small>
     <small>${t.items.map(i => esc(ex(i.exId).name)).join(', ')}</small></div><span class="chev">›</span></button>`).join('')}
@@ -193,7 +205,7 @@ function viewPlan() {
 function viewTpl(id) {
   const t = tpl(id); if (!t) return viewPlan();
   const a = i => `data-t="${t.id}" data-i="${i}"`;
-  return `<div class="whead"><input class="title" data-tf="name" data-t="${t.id}" value="${esc(t.name)}" placeholder="Название, напр. Верх А"></div>
+  return `<div class="whead"><div class="hd">${BK('plan')}<input class="title" data-tf="name" data-t="${t.id}" value="${esc(t.name)}" placeholder="Название, напр. Верх А"></div></div>
   <h3>Дни недели</h3><div class="days">${WEEK.map(d => `<button class="${t.days.includes(d) ? 'on' : ''}" data-act="tday" data-t="${t.id}" data-d="${d}">${DAYS[d]}</button>`).join('')}</div>
   <h3>Упражнения · подходов</h3>
   ${t.items.length ? `<div class="list">${t.items.map((it, i) => `<div class="li tpli"><span>${esc(ex(it.exId).name)}</span><div class="tctl">
@@ -241,7 +253,7 @@ function startFromTpl(t) {
 function viewWorkout(w) {
   if (!w) return viewStart();
   const active = S.activeId === w.id;
-  return `<div class="whead"><input class="title" data-f="title" data-w="${w.id}" placeholder="${esc(wTitle(w))}" value="${esc(w.title || '')}">
+  return `<div class="whead"><div class="hd">${active ? BK('home', true) : BK('history')}<input class="title" data-f="title" data-w="${w.id}" placeholder="${esc(wTitle(w))}" value="${esc(w.title || '')}"></div>
     <div class="wmeta"><input type="date" class="wdate" data-f="date" data-w="${w.id}" value="${dateVal(w.date)}">
     <small>${active ? `идёт <span id="elapsed">${elapsed(w)}</span> · ` : w.end ? elapsed(w) + ' · ' : ''}${setCount(w)} ${plural(setCount(w), 'подход', 'подхода', 'подходов')}${tonnage(w) ? ` · ${fmtW(Math.round(tonnage(w)))} кг` : ''}</small></div>
     <textarea class="wnote" data-f="note" data-w="${w.id}" rows="1" placeholder="Заметка к тренировке">${esc(w.note || '')}</textarea></div>
@@ -267,10 +279,59 @@ function itemCard(w, it, i) {
     <button class="chip" data-act="rest" data-ex="${it.exId}">⏱ отдых ${fmtSec(restFor(it.exId))}</button></div></section>`;
 }
 
+/* ---------- календарь и сводка ---------- */
+const finished = () => S.workouts.filter(w => w.id !== S.activeId);
+function byDay() { const m = new Map(); for (const w of finished()) { const k = dateVal(w.date); if (!m.has(k)) m.set(k, []); m.get(k).push(w); } return m; }
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const monthKey = d => d.getFullYear() * 12 + d.getMonth();
+const arrow = (d, unit = '') => d > 0 ? `<span class="up">↑ ${fmtW(Math.round(d * 10) / 10)}${unit}</span>` : d < 0 ? `<span class="dn">↓ ${fmtW(Math.round(-d * 10) / 10)}${unit}</span>` : `<span class="eq">без изменений</span>`;
+const CAL_ICON = '<svg viewBox="0 0 24 24" class="ico"><rect x="4" y="5.5" width="16" height="14" rx="3"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg>';
+
+function calendarHtml() {
+  const map = byDay(), fin = finished(), now = new Date(), today = ymd(now);
+  let lo = monthKey(now), hi = lo;
+  for (const w of fin) { const k = monthKey(new Date(w.date)); lo = Math.min(lo, k); hi = Math.max(hi, k); }
+  lo = Math.max(lo, hi - 60);
+  let html = '';
+  for (let k = hi; k >= lo; k--) {
+    const y = Math.floor(k / 12), m = k % 12, n = new Date(y, m + 1, 0).getDate(), lead = (new Date(y, m, 1).getDay() + 6) % 7;
+    let cnt = 0, cells = '';
+    for (let i = 0; i < lead; i++) cells += '<span></span>';
+    for (let d = 1; d <= n; d++) {
+      const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`, c = (map.get(key) || []).length;
+      cnt += c;
+      cells += `<button class="cd${c ? ' has' : ''}${c > 1 ? ' two' : ''}${key === today ? ' today' : ''}${key > today ? ' fut' : ''}" data-act="day" data-d="${key}" aria-label="${d} ${MONG[m]}">${d}</button>`;
+    }
+    html += `<div class="card mon"><div class="mh"><b>${MONTHS[m]} ${y}</b><span>${cnt} ${plural(cnt, 'тренировка', 'тренировки', 'тренировок')}</span></div>
+    <div class="cal">${['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map(x => `<i>${x}</i>`).join('')}${cells}</div></div>`;
+  }
+  return html;
+}
+
+function daySheet(key) {
+  const [y, m, d] = key.split('-').map(Number), dt = new Date(y, m - 1, d);
+  const list = finished().filter(w => dateVal(w.date) === key).sort((a, b) => a.date.localeCompare(b.date));
+  const body = list.length ? list.map(w => {
+    const meta = [w.end ? elapsed(w) : '', tonnage(w) ? fmtInt(tonnage(w)) + ' кг' : '', `${setCount(w)} ${plural(setCount(w), 'подход', 'подхода', 'подходов')}`].filter(Boolean).join(' · ');
+    return `<div class="card flat"><b>${esc(wTitle(w))}</b><small>${meta}</small>
+      ${w.items.length ? w.items.map(it => { const ss = doneSets(it).length ? doneSets(it) : it.sets; return `<div class="dsess"><span>${esc(ex(it.exId).name)}</span><div>${ss.map(setStr).join(' · ')}</div></div>`; }).join('') : '<small>Пока без упражнений</small>'}
+      <button class="btn primary" data-act="open" data-w="${w.id}">Открыть</button></div>`;
+  }).join('') : '<p class="empty" style="padding:18px 10px">Отдых</p>';
+  sheet(`<h2>${WDAY[dt.getDay()]}, ${d} ${MONG[m - 1]}</h2>${body}
+  <button class="btn${list.length ? '' : ' primary'}" data-act="addday" data-d="${key}">${list.length ? '+ Ещё одна тренировка в этот день' : 'Добавить тренировку на этот день'}</button>`);
+}
+function addDay(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const w = { id: uid(), date: new Date(y, m - 1, d, 18, 0).toISOString(), title: '', items: [] };
+  S.workouts.push(w); save(); closeSheet(); go('workout/' + w.id);
+}
+
 function viewHistory() {
   const list = sorted().filter(w => w.id !== S.activeId);
-  if (!list.length) return `<h1>История</h1><p class="empty">Пока пусто. Заверши первую тренировку — она появится здесь.</p>`;
-  let html = '<h1>История</h1>', month = '';
+  let html = head('История') + calendarHtml();
+  if (!list.length) return html + `<p class="empty">Пока пусто. Заверши первую тренировку — она появится здесь.</p>`;
+  html += '<h3>Список</h3>';
+  let month = '';
   for (const w of list) {
     const d = new Date(w.date), m = d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
     if (m !== month) { month = m; html += `<h3>${m}</h3>`; }
@@ -278,6 +339,82 @@ function viewHistory() {
       <small>${fmtDate(w.date)} · ${w.items.length} упр. · ${setCount(w)} подх.${tonnage(w) ? ` · ${fmtW(Math.round(tonnage(w)))} кг` : ''}</small>
       <small>${w.items.map(i => esc(ex(i.exId).name)).join(', ')}</small></div><span class="chev">›</span></button>`;
   }
+  return html;
+}
+
+/* ---------- главная ---------- */
+function progRows() {
+  const now = Date.now(), D = 864e5, ids = [...new Set(S.workouts.flatMap(w => w.items.map(i => i.exId)))], rows = [];
+  for (const id of ids) {
+    const h = exHistory(id), rec = h.filter(x => now - new Date(x.w.date) <= 60 * D);
+    if (!rec.length) continue;
+    const last = h.at(-1), cur = sessStats(last.sets);
+    const win = h.filter(x => { const a = (now - new Date(x.w.date)) / D; return a >= 28 && a <= 60; });
+    const ref = win.length ? win[0] : h[0];
+    const delta = ref === last ? null : cur.best - sessStats(ref.sets).best;
+    const m30 = h.filter(x => now - new Date(x.w.date) <= 30 * D).flatMap(x => x.sets);
+    const ws = m30.filter(s => s.w), rs = m30.filter(s => s.r != null);
+    rows.push({ id, n: rec.length, last: last.w.date, cur, delta, avgW: ws.length ? ws.reduce((a, s) => a + s.w, 0) / ws.length : null, avgR: rs.length ? rs.reduce((a, s) => a + s.r, 0) / rs.length : null });
+  }
+  return rows.sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
+}
+
+function viewHome() {
+  const now = new Date(), fin = finished(), map = byDay(), today = ymd(now), act = S.activeId && wk(S.activeId);
+  const wk0 = weekStart(now), inM = (w, y, m) => { const d = new Date(w.date); return d.getFullYear() === y && d.getMonth() === m; };
+  const cy = now.getFullYear(), cm = now.getMonth(), py = cm ? cy : cy - 1, pm = (cm + 11) % 12;
+  const mine = fin.filter(w => inM(w, cy, cm)), prev = fin.filter(w => inM(w, py, pm));
+  let html = head('Главная', null, `<button class="ibtn" data-act="go" data-to="history" aria-label="Календарь">${CAL_ICON}</button>`);
+  if (act) html += `<button class="card row hot" data-act="go" data-to="workout"><div><small class="cap">Идёт тренировка</small><b>${esc(wTitle(act))}</b><small>${setCount(act)} ${plural(setCount(act), 'подход', 'подхода', 'подходов')}</small></div><span class="pill">Продолжить</span></button>`;
+  // неделя
+  html += '<div class="wstrip">' + Array.from({ length: 7 }, (_, k) => {
+    const d = new Date(wk0); d.setDate(d.getDate() + k); const key = ymd(d), c = (map.get(key) || []).length;
+    return `<div class="wsd"><span>${['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'][k]}</span><button class="${c ? 'has ' : ''}${key === today ? 'today ' : ''}${key > today ? 'fut' : ''}" data-act="wday" data-d="${key}">${d.getDate()}</button></div>`;
+  }).join('') + '</div>';
+  // месяц
+  const weeks = [], first = new Date(cy, cm, 1), lastD = new Date(cy, cm + 1, 0);
+  for (let s = weekStart(first); s <= lastD; s = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7)) {
+    const e = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7);
+    weeks.push({ s, c: mine.filter(w => { const d = new Date(w.date); return d >= s && d < e; }).length, cur: +s === +wk0, lab: s.getMonth() === cm ? s.getDate() : 1 });
+  }
+  const mx = Math.max(3, ...weeks.map(x => x.c));
+  html += `<div class="card mcard"><div class="mleft"><small class="cap">Тренировок в этом месяце</small><div class="big">${mine.length}</div>
+    <small>в прошлом месяце ${prev.length} ${arrow(mine.length - prev.length)}</small></div>
+    <div class="mbars">${weeks.map(x => `<div class="mc"><div class="mb"><div class="f${x.cur ? ' cur' : ''}" style="height:${x.c ? Math.max(8, 100 * x.c / mx) : 0}%"></div></div><em>${x.lab}</em></div>`).join('')}</div></div>`;
+  // плитки
+  const wk8 = new Date(wk0); wk8.setDate(wk8.getDate() - 49);
+  const in8 = fin.filter(w => new Date(w.date) >= wk8).length;
+  const firstW = fin.length ? weekStart(new Date(fin.reduce((a, w) => w.date < a ? w.date : a, fin[0].date))) : wk0;
+  const nw = Math.min(8, Math.max(1, Math.round((wk0 - firstW) / (7 * 864e5)) + 1));
+  const ton = mine.reduce((a, w) => a + tonnage(w), 0);
+  const msets = mine.flatMap(w => w.items.flatMap(doneSets)).filter(s => s.r != null);
+  const avgR = msets.length ? msets.reduce((a, s) => a + s.r, 0) / msets.length : null;
+  const wkeys = new Set(fin.map(w => ymd(weekStart(new Date(w.date)))));
+  const k = new Date(wk0); let streak = 0;
+  if (!wkeys.has(ymd(k))) k.setDate(k.getDate() - 7);
+  while (wkeys.has(ymd(k))) { streak++; k.setDate(k.getDate() - 7); }
+  const lastW = sorted().find(w => w.id !== S.activeId), since = lastW ? Math.max(0, Math.floor((now - new Date(lastW.date)) / 864e5)) : null;
+  html += `<div class="tiles2">
+    <div class="card t2"><small class="cap">В неделю в среднем</small><div class="big s">${fin.length ? fmtW(Math.round(in8 / nw * 10) / 10) : '—'}</div><small>за ${nw} ${plural(nw, 'неделю', 'недели', 'недель')}</small></div>
+    <div class="card t2"><small class="cap">Тоннаж за месяц</small><div class="big s">${ton ? fmtInt(ton) : '—'}</div><small>кг (вес × повторы)</small></div>
+    <div class="card t2"><small class="cap">Средние повторы</small><div class="big s">${avgR != null ? fmtW(Math.round(avgR * 10) / 10) : '—'}</div><small>на подход, за месяц</small></div>
+    <div class="card t2"><small class="cap">Серия</small><div class="big s">${streak || '—'}</div><small>${streak ? plural(streak, 'неделя', 'недели', 'недель') + ' подряд' : since != null ? (since ? since + ' ' + plural(since, 'день', 'дня', 'дней') + ' без тренировки' : 'сегодня тренировка') : 'недель подряд'}</small></div></div>`;
+  // план
+  if (!act) {
+    const todays = tplsFor(now.getDay()), done = map.has(today);
+    if (S.templates.length && todays.length && !done) html += todays.map(t => `<div class="card row plan"><div><small class="cap">Сегодня по плану</small><b>${esc(t.name)}</b><small>${t.items.map(i => esc(ex(i.exId).name)).join(', ') || 'пустой'}</small></div><button class="pill" data-act="tstart" data-t="${t.id}">Начать</button></div>`).join('');
+    else {
+      const n = S.templates.length && !todays.length ? nextPlanned() : null;
+      html += `<div class="card row plan"><div><small class="cap">${done ? 'Сегодня уже была тренировка' : 'Тренировка'}</small><b>${done ? 'Ещё одну?' : 'Начать тренировку'}</b><small>${n ? `По плану ${n.k === 1 ? 'завтра' : 'в ' + DAYS[n.d]}: ${n.l.map(t => esc(t.name)).join(', ')}` : 'Пустая — упражнения добавишь по ходу'}</small></div><button class="pill" data-act="start">Начать</button></div>`;
+    }
+  }
+  // прогресс по упражнениям
+  const rows = progRows();
+  html += '<h3>Прогресс по упражнениям</h3>' + (rows.length ? `<div class="card plist">${rows.slice(0, 20).map(r => {
+    const unit = r.cur.bw ? ' раз' : ' кг';
+    return `<button class="prow" data-act="prog" data-ex="${r.id}"><div class="pl"><b>${esc(ex(r.id).name)}</b><small>${r.avgW != null ? 'ср. ' + fmtW(Math.round(r.avgW * 10) / 10) + ' кг · ' : ''}${r.avgR != null ? fmtW(Math.round(r.avgR * 10) / 10) + ' повт.' : ''} за 30 дн.</small></div>
+      <div class="pr2"><b>${fmtW(r.cur.best)}${unit}</b><small>${r.delta == null ? 'первая запись' : arrow(r.delta, r.cur.bw ? '' : ' кг')}</small></div></button>`;
+  }).join('')}</div>` : '<p class="empty" style="padding:20px 10px">Здесь появятся упражнения, которые делал за последние 60 дней.</p>');
   return html;
 }
 
@@ -302,13 +439,14 @@ function viewProgress() {
   const exIds = [...new Set(all.flatMap(w => w.items.map(i => i.exId)))];
   const rows = exIds.map(id => { const h = exHistory(id); return { id, n: h.length, last: h.at(-1)?.w.date || '', pr: h.length ? h.map(x => sessStats(x.sets)).reduce((a, b) => b.best > a.best ? b : a) : null }; })
     .filter(r => r.n).sort((a, b) => b.last.localeCompare(a.last));
-  return `<h1>Прогресс</h1>
+  return `${head('Прогресс')}
   <div class="tiles"><div class="tile"><b>${all.length}</b><small>всего тренировок</small></div>
   <div class="tile"><b>${last30}</b><small>за 30 дней</small></div><div class="tile"><b>${counts[11]}</b><small>на этой неделе</small></div></div>
   <h3>Тренировок в неделю</h3><div class="card">${bars(counts, weeks)}</div>
   ${rows.length ? `<h3>Упражнения</h3><div class="list">${rows.map(r => `<button class="li" data-act="prog" data-ex="${r.id}"><span>${esc(ex(r.id).name)}</span>
     <small>${r.pr.bw ? r.pr.best + ' раз' : fmtW(r.pr.best) + ' кг'} · ${r.n} трен.</small></button>`).join('')}</div>`
-      : `<p class="empty">Графики появятся после первых тренировок.</p>`}`;
+      : `<p class="empty">Графики появятся после первых тренировок.</p>`}
+  <button class="btn" data-act="go" data-to="exercises">База упражнений</button>`;
 }
 function bars(vals, weeks) {
   const W = 340, H = 110, mx = Math.max(4, ...vals), bw = (W - 20) / vals.length;
@@ -318,42 +456,51 @@ function bars(vals, weeks) {
   }).join('')}<text x="10" y="${H - 4}">${fmtShort(weeks[0])}</text><text x="${W - 10}" y="${H - 4}" text-anchor="end">эта неделя</text></svg>`;
 }
 
-let progMetric = 'best';
+let progMetric = 'best', progSel = null;
 function viewExProgress(id) {
   const e = ex(id), h = exHistory(id);
-  if (!h.length) return `<h1>${esc(e.name)}</h1><p class="empty">Пока нет выполненных подходов.</p>`;
+  if (!h.length) return `${head(esc(e.name), 'progress')}<p class="empty">Пока нет выполненных подходов.</p>`;
   const st = h.map(x => ({ ...sessStats(x.sets), date: x.w.date }));
   const bw = st.every(s => s.bw);
   const metrics = bw ? [['best', 'Повторы'], ['reps', 'Сумма повт.']] : [['best', 'Рабочий вес'], ['orm', '1ПМ ≈'], ['vol', 'Объём']];
   if (!metrics.some(m => m[0] === progMetric)) progMetric = 'best';
   const unit = bw ? 'раз' : progMetric === 'vol' ? 'кг·раз' : 'кг';
   const pr = st.reduce((a, b) => b.best > a.best ? b : a), prOrm = Math.max(...st.map(s => s.orm));
-  return `<h1>${esc(e.name)}</h1>
+  let si = h.findIndex(x => x.w.id === progSel); if (si < 0) si = h.length - 1;
+  const sel = h[si], ss = st[si], yv = ss[progMetric], rv = Math.round(yv * 10) / 10;
+  return `${head(esc(e.name), 'progress')}
   <div class="tiles"><div class="tile"><b>${bw ? pr.best : fmtW(pr.best)}</b><small>рекорд, ${bw ? 'раз' : 'кг'}</small></div>
   <div class="tile"><b>${bw ? '—' : fmtW(Math.round(prOrm * 2) / 2)}</b><small>1ПМ ≈, кг</small></div><div class="tile"><b>${h.length}</b><small>тренировок</small></div></div>
   <div class="seg">${metrics.map(([k, n]) => `<button class="${k === progMetric ? 'on' : ''}" data-act="metric" data-m="${k}" data-ex="${id}">${n}</button>`).join('')}</div>
-  <div class="card">${chart(st.map(s => ({ x: fmtShort(s.date), y: s[progMetric] })), unit)}</div>
+  <div class="card">${chart(h.map((x, i) => ({ id: x.w.id, x: fmtShort(x.w.date), y: st[i][progMetric] })), unit, si)}</div>
+  <div class="card selc"><small class="cap">${fmtDate(sel.w.date)}${ss === pr ? ' · <span class="pr">рекорд</span>' : ''}</small>
+    <div class="big s">${fmtW(rv)} <span class="unit">${unit}</span></div><small>${metrics.find(m => m[0] === progMetric)[1]}</small>
+    <div class="selsets">${sel.sets.map((s, j) => `<span class="sp">${j + 1}. ${setStr(s)}</span>`).join('')}</div>
+    <button class="btn" data-act="open" data-w="${sel.w.id}">Открыть тренировку</button></div>
   <p class="muted" style="font-size:13px">Рекорд: <span class="pr">${setStr(pr.top)}</span> (${fmtShort(pr.date)}). 1ПМ считается по формуле Эпли — ориентир, а не замер.</p>
-  <h3>Все подходы</h3><div class="card">${[...h].reverse().map(x => `<div class="sess"><span>${fmtShort(x.w.date)}</span><div>${x.sets.map(setStr).join(' · ')}</div></div>`).join('')}</div>
+  <h3>Все подходы</h3><div class="card">${[...h].reverse().map(x => `<div class="sess${x.w.id === sel.w.id ? ' sel' : ''}"><span>${fmtShort(x.w.date)}</span><div>${x.sets.map(setStr).join(' · ')}</div></div>`).join('')}</div>
   <button class="btn" data-act="go" data-to="progress">← Ко всем упражнениям</button>`;
 }
-function chart(pts, unit) {
-  if (pts.length < 2) return `<p class="muted" style="margin:6px 0">График появится со второй тренировки. Сейчас: ${fmtW(Math.round(pts[0].y))} ${unit}</p>`;
-  const W = 340, H = 180, L = 34, R = 10;
+function chart(pts, unit, si) {
+  if (pts.length < 2) return `<p class="muted" style="margin:6px 0">График появится со второй тренировки. Сейчас: ${fmtW(Math.round(pts[0].y * 10) / 10)} ${unit}</p>`;
+  const W = 340, H = 180, L = 34, R = 14;
   const ys = pts.map(p => p.y); let mn = Math.min(...ys), mx = Math.max(...ys);
   if (mn === mx) { mn -= 1; mx += 1; }
-  const X = i => L + i * (W - L - R) / (pts.length - 1), Y = v => 12 + (H - 40) * (1 - (v - mn) / (mx - mn));
+  const step = (W - L - R) / (pts.length - 1), X = i => L + i * step, Y = v => 14 + (H - 44) * (1 - (v - mn) / (mx - mn));
   const d = pts.map((q, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(q.y).toFixed(1)}`).join('');
-  const r = v => fmtW(Math.round(v * 10) / 10);
+  const r = v => fmtW(Math.round(v * 10) / 10), hit = pts.length > 40 ? Math.max(5, step / 2) : 18;
   return `<svg viewBox="0 0 ${W} ${H}" class="chart">
     <line class="grid" x1="${L}" x2="${W - R}" y1="${Y(mx)}" y2="${Y(mx)}"/><line class="grid" x1="${L}" x2="${W - R}" y1="${Y(mn)}" y2="${Y(mn)}"/>
     <text x="0" y="${Y(mx) + 4}">${r(mx)}</text><text x="0" y="${Y(mn) + 4}">${r(mn)}</text>
-    <path d="${d}" class="ln"/>${pts.length <= 40 ? pts.map((q, i) => `<circle cx="${X(i)}" cy="${Y(q.y)}" r="3.2"/>`).join('') : ''}
-    <text x="${L}" y="${H - 6}">${pts[0].x}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${pts.at(-1).x}</text></svg>`;
+    <line class="selline" x1="${X(si)}" x2="${X(si)}" y1="6" y2="${H - 22}"/>
+    <path d="${d}" class="ln"/>${pts.length <= 40 ? pts.map((q, i) => i === si ? '' : `<circle cx="${X(i)}" cy="${Y(q.y)}" r="3.5"/>`).join('') : ''}
+    <circle class="sel" cx="${X(si)}" cy="${Y(pts[si].y)}" r="6.5"/>
+    <text x="${L}" y="${H - 6}">${pts[0].x}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${pts.at(-1).x}</text>
+    ${pts.map((q, i) => `<circle class="hit" data-act="pt" data-w="${q.id}" cx="${X(i)}" cy="${Y(q.y)}" r="${hit}"/>`).join('')}</svg>`;
 }
 
 function viewExercises() {
-  return `<h1>Упражнения</h1><button class="btn ghost" data-act="exnew">+ Своё упражнение</button>
+  return `${head('Упражнения', 'settings')}<button class="btn ghost" data-act="exnew">+ Своё упражнение</button>
   ${groups().map(g => {
     const l = S.exercises.filter(e => (e.group || 'Другое') === g && !e.hidden).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     return l.length ? `<h3>${esc(g)}</h3><div class="list">${l.map(e => {
@@ -365,7 +512,11 @@ function viewExercises() {
 
 function viewSettings() {
   const s = S.settings;
-  return `<h1>Ещё</h1>
+  return `${head('Ещё')}
+  <div class="list"><button class="li" data-act="go" data-to="plan"><span>Программа и шаблоны</span><span class="chev">›</span></button>
+  <button class="li" data-act="go" data-to="exercises"><span>Упражнения</span><span class="chev">›</span></button></div>
+  <h3>Оформление</h3>
+  <div class="seg">${[['light', 'Светлая'], ['dark', 'Тёмная'], ['system', 'Как в системе']].map(([k, n]) => `<button class="${(s.theme || 'light') === k ? 'on' : ''}" data-act="theme" data-v="${k}">${n}</button>`).join('')}</div>
   <h3>Отдых по умолчанию</h3>
   <div class="presets">${[45, 60, 90, 120, 150, 180, 240, 300].map(v => `<button class="${s.rest === v ? 'on' : ''}" data-act="defrest" data-v="${v}">${fmtSec(v)}</button>`).join('')}</div>
   <p class="muted" style="font-size:13px">Для отдельного упражнения отдых меняется кнопкой ⏱ на его карточке.</p>
@@ -571,8 +722,24 @@ function doImport() {
 }
 
 /* ---------- роутер ---------- */
-function route() { return (location.hash.slice(2) || 'workout').split('/'); }
-function go(h) { if (location.hash === '#/' + h) render(); else location.hash = '#/' + h; }
+let navN = 0, shownHash = null;
+function route() { return (location.hash.slice(2) || 'home').split('/'); }
+function go(h) {
+  if (location.hash === '#/' + h) return render();
+  closeSheet(); navN++; history.pushState({ n: navN }, '', '#/' + h); render(); window.scrollTo(0, 0);
+}
+function goBack(parent) { if (navN > 0) history.back(); else go(parent); }
+function onNav() {
+  if (shownHash === location.hash) return;
+  const n = history.state && history.state.n;
+  if (typeof n === 'number') navN = n; else { navN++; history.replaceState({ n: navN }, ''); }
+  closeSheet(); render(); window.scrollTo(0, 0);
+}
+function applyTheme() {
+  const t = S.settings.theme || 'light', dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = t;
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = dark ? '#0e0f11' : '#ecebe8';
+}
 function render() {
   const [p, a] = route();
   let html;
@@ -582,9 +749,11 @@ function render() {
   else if (p === 'progress') html = a ? viewExProgress(a) : viewProgress();
   else if (p === 'exercises') html = viewExercises();
   else if (p === 'settings') html = viewSettings();
-  else html = viewStart();
+  else if (p === 'home') html = viewHome();
+  else html = viewHome();
+  shownHash = location.hash;
   $('#view').innerHTML = html;
-  const tab = p === 'workout' && a && a !== S.activeId ? 'history' : p === 'plan' ? 'workout' : p;
+  const tab = p === 'workout' && a && a !== S.activeId ? 'history' : p === 'plan' ? 'workout' : p === 'exercises' ? 'settings' : ['workout', 'history', 'progress', 'settings'].includes(p) ? p : 'home';
   document.querySelectorAll('.tabs a').forEach(t => t.classList.toggle('on', t.dataset.tab === tab));
   renderTimer(true); keepAwake(!!S.activeId);
 }
@@ -612,6 +781,7 @@ function finish(w) {
 }
 
 document.addEventListener('click', e => {
+  const tabA = e.target.closest('.tabs a'); if (tabA) { e.preventDefault(); return go(tabA.dataset.tab); }
   const b = e.target.closest('[data-act]'); if (!b) return;
   const d = b.dataset, w = d.w ? wk(d.w) : null, i = +d.i, j = +d.j;
   switch (d.act) {
@@ -619,6 +789,12 @@ document.addEventListener('click', e => {
     case 'repeat': { const src = wk(d.w); return newWorkout(src.items.map(it => ({ exId: it.exId, sets: it.sets.map(s => ({ w: s.w, r: s.r, done: false })) })), src.title); }
     case 'open': return go('workout/' + d.w);
     case 'back': return go('history');
+    case 'nav': return d.force ? go(d.p) : goBack(d.p);
+    case 'day': return daySheet(d.d);
+    case 'wday': { const l = finished().filter(x => dateVal(x.date) === d.d); if (l.length === 1) return go('workout/' + l[0].id); if (l.length) return daySheet(d.d); return; }
+    case 'addday': return addDay(d.d);
+    case 'pt': progSel = d.w; return render();
+    case 'theme': S.settings.theme = d.v; save(); applyTheme(); return render();
     case 'go': return go(d.to);
     case 'pick': return openPicker(d.w);
     case 'padd': return pickAdd(d.ex);
@@ -713,7 +889,9 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.f === 'r') e.target.blur(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { renderTimer(true); keepAwake(!!S.activeId); } });
-window.addEventListener('hashchange', () => { closeSheet(); render(); window.scrollTo(0, 0); });
+window.addEventListener('popstate', onNav);
+window.addEventListener('hashchange', onNav);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme());
 
 /* ---------- резервные копии ---------- */
 async function exportData() {
@@ -729,7 +907,7 @@ function importData(file) {
       const d = JSON.parse(r.result);
       if (d.v !== 1 || !Array.isArray(d.workouts) || !Array.isArray(d.exercises)) throw 0;
       if (!confirm(`В копии ${d.workouts.length} тренировок. Заменить текущие данные?`)) return;
-      S = { ...seed(), ...d, timer: null }; save(); toast('Данные загружены'); go('history');
+      S = migrate({ ...seed(), ...d, timer: null }); save(); applyTheme(); toast('Данные загружены'); go('history');
     } catch (e) { toast('Это не копия «Подхода»'); }
   };
   r.readAsText(file);
@@ -742,4 +920,7 @@ setInterval(() => {
 }, 250);
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js');
+applyTheme();
+if (!history.state || typeof history.state.n !== 'number') history.replaceState({ n: 0 }, '');
+else navN = history.state.n;
 render();

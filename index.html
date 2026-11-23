@@ -4,25 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Подход</title>
-<meta name="theme-color" content="#0e0f11">
+<meta name="theme-color" content="#ecebe8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Подход">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
+<script>try{document.documentElement.dataset.theme=JSON.parse(localStorage.getItem("podhod.v1")).settings.theme||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main id="view"></main>
 <div id="timer" class="timer" hidden></div>
 <nav class="tabs">
-  <a href="#/workout" data-tab="workout"><svg viewBox="0 0 24 24"><path d="M3 10v4M6 7v10M9 12h6M18 7v10M21 10v4"/></svg>Тренировка</a>
-  <a href="#/history" data-tab="history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>История</a>
-  <a href="#/progress" data-tab="progress"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 15l4-4 3 3 5-6"/></svg>Прогресс</a>
-  <a href="#/exercises" data-tab="exercises"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>Упражнения</a>
-  <a href="#/settings" data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Ещё</a>
+  <a href="#/home" data-tab="home"><span class="ic"><svg viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg></span>Главная</a>
+  <a href="#/workout" data-tab="workout"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 10v4M6 7v10M9 12h6M18 7v10M21 10v4"/></svg></span>Тренировка</a>
+  <a href="#/history" data-tab="history"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span>История</a>
+  <a href="#/progress" data-tab="progress"><span class="ic"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 15l4-4 3 3 5-6"/></svg></span>Прогресс</a>
+  <a href="#/settings" data-tab="settings"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg></span>Ещё</a>
 </nav>
 <div id="modal" hidden></div>
 <div id="toast" hidden></div>

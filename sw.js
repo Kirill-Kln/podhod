@@ -1,6 +1,6 @@
 ﻿// Офлайн: сначала пробуем сеть (до 2,5 с), без сети или на медленной — отдаём из кэша.
 // Так обновления прилетают сразу, а в зале без интернета приложение всё равно открывается.
-const CACHE = 'podhod-0.3.0';
+const CACHE = 'podhod-0.4.0';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
