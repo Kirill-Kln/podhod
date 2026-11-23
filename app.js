@@ -1,7 +1,8 @@
 ﻿'use strict';
 /* Подход — тренировочный дневник (PWA). Все данные — в localStorage телефона. */
 const KEY = 'podhod.v1';
-const VERSION = '0.4.0';
+const VERSION = '0.5.1';
+const PERIODS = [['week', 'Неделя', 7, 'за неделю'], ['month', 'Месяц', 30, 'за месяц'], ['3m', '3 месяца', 90, 'за 3 месяца'], ['year', 'Год', 365, 'за год'], ['all', 'Всё время', 0, 'за всё время']];
 
 const DEFAULT_EX = [
   ['Грудь', ['Жим штанги лёжа', 'Жим гантелей лёжа', 'Жим штанги на наклонной', 'Жим гантелей на наклонной', 'Разводка гантелей', 'Сведение в кроссовере', 'Жим в тренажёре', 'Отжимания на брусьях', 'Отжимания']],
@@ -45,6 +46,8 @@ function migrate(s) {
   s.templates = s.templates || [];
   s.settings = { rest: 90, sound: true, countdown: true, ...(s.settings || {}) };
   if (!['light', 'dark', 'system'].includes(s.settings.theme)) s.settings.theme = 'light';
+  const pe = s.settings.period;
+  if (!pe || ![...PERIODS.map(x => x[0]), 'custom'].includes(pe.k) || (pe.k === 'custom' && !(parseYmd(pe.from) && parseYmd(pe.to)))) s.settings.period = { k: 'month' };
   return s;
 }
 function load() {
@@ -279,6 +282,67 @@ function itemCard(w, it, i) {
     <button class="chip" data-act="rest" data-ex="${it.exId}">⏱ отдых ${fmtSec(restFor(it.exId))}</button></div></section>`;
 }
 
+/* ---------- период (общий для Главной, Прогресса и графика упражнения) ---------- */
+function parseYmd(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ''); if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]); return d.getMonth() === +m[2] - 1 ? d : null;
+}
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const dayStart = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const fmtDM = d => `${d.getDate()} ${MON[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : ''}`;
+// from — начало первого дня, end — начало дня ПОСЛЕ последнего (сегодня включительно)
+function period() {
+  const pe = S.settings.period || { k: 'month' }, t0 = dayStart(new Date()), tomorrow = addDays(t0, 1);
+  let k = pe.k, from, end = tomorrow, on;
+  if (k === 'custom') {
+    let a = parseYmd(pe.from), b = parseYmd(pe.to);
+    if (!a || !b) k = 'month';
+    else { if (a > b) [a, b] = [b, a]; from = a; end = addDays(b, 1); on = 'за период'; }
+  }
+  if (k === 'all') {
+    const ds = finished().map(w => w.date); from = ds.length ? dayStart(ds.reduce((a, d) => d < a ? d : a)) : t0; on = 'за всё время';
+    if (from > t0) from = t0;
+  } else if (k !== 'custom') {
+    const P = PERIODS.find(x => x[0] === k) || PERIODS[1]; k = P[0]; from = addDays(t0, 1 - P[2]); on = P[3];
+  }
+  const days = Math.max(1, Math.round((end - from) / 864e5)), last = addDays(end, -1);
+  return { k, from, end, days, on, all: k === 'all', prev: k === 'all' ? null : { from: addDays(from, -days), end: from },
+    range: days === 1 ? fmtDM(from) : `${fmtDM(from)} — ${fmtDM(last)}` };
+}
+const inR = (w, r) => { const t = new Date(w.date); return t >= r.from && t < r.end; };
+function periodBar() {
+  const r = period();
+  return `<div class="pchips">${PERIODS.map(([k, n]) => `<button class="${r.k === k ? 'on' : ''}" data-act="period" data-k="${k}">${n}</button>`).join('')}<button class="${r.k === 'custom' ? 'on' : ''}" data-act="pcustom">Свои даты</button></div><div class="prange">${r.range}</div>`;
+}
+function periodSheet() {
+  const r = period();
+  sheet(`<h2>Свои даты</h2><label class="f"><span>От</span><input type="date" id="pfrom" value="${ymd(r.from)}"></label>
+  <label class="f"><span>До (включительно)</span><input type="date" id="pto" value="${ymd(addDays(r.end, -1))}"></label>
+  <button class="btn primary" data-act="papply">Применить</button>`);
+}
+function periodApply() {
+  let a = $('#pfrom').value, b = $('#pto').value;
+  if (!a && !b) return toast('Выбери даты');
+  if (!a) a = b; if (!b) b = ymd(new Date());
+  if (!parseYmd(a) || !parseYmd(b)) return toast('Не разобрал даты');
+  if (a > b) [a, b] = [b, a];
+  S.settings.period = { k: 'custom', from: a, to: b }; save(); closeSheet(); render();
+}
+// столбики: по дням (до 14 дн.), неделям (до 100 дн.), иначе по месяцам (последние 12)
+// подписи столбиков: при >7 столбиков — через шаг, первая и последняя всегда
+function labShow(i, n) { if (n <= 7) return true; const st = Math.ceil(n / 4); return i === 0 || i === n - 1 || (i % st === 0 && n - 1 - i >= st); }
+function buckets(r, list) {
+  const out = [], now = new Date(), mode = r.days <= 14 ? 'd' : r.days <= 100 ? 'w' : 'm';
+  if (mode === 'd') for (let s = r.from; s < r.end; s = addDays(s, 1)) out.push({ s, e: addDays(s, 1), lab: s.getDate() });
+  else if (mode === 'w') for (let s = weekStart(r.from); s < r.end; s = addDays(s, 7)) out.push({ s, e: addDays(s, 7), lab: (s < r.from ? r.from : s).getDate() });
+  else for (let s = new Date(r.from.getFullYear(), r.from.getMonth(), 1); s < r.end; s = new Date(s.getFullYear(), s.getMonth() + 1, 1)) out.push({ s, e: new Date(s.getFullYear(), s.getMonth() + 1, 1), lab: MON[s.getMonth()] + (s.getMonth() === 0 || s === r.from || (s.getFullYear() === r.from.getFullYear() && s.getMonth() === r.from.getMonth()) ? ' ’' + String(s.getFullYear()).slice(2) : '') });
+  const res = (mode === 'm' ? out.slice(-12) : out).map(x => {
+    const lo = x.s < r.from ? r.from : x.s, hi = x.e > r.end ? r.end : x.e;
+    return { ...x, c: list.filter(w => { const t = new Date(w.date); return t >= lo && t < hi; }).length, cur: now >= x.s && now < x.e };
+  });
+  res.mode = mode; return res;
+}
+
 /* ---------- календарь и сводка ---------- */
 const finished = () => S.workouts.filter(w => w.id !== S.activeId);
 function byDay() { const m = new Map(); for (const w of finished()) { const k = dateVal(w.date); if (!m.has(k)) m.set(k, []); m.get(k).push(w); } return m; }
@@ -343,17 +407,15 @@ function viewHistory() {
 }
 
 /* ---------- главная ---------- */
-function progRows() {
-  const now = Date.now(), D = 864e5, ids = [...new Set(S.workouts.flatMap(w => w.items.map(i => i.exId)))], rows = [];
+function progRows(r) {
+  const ids = [...new Set(S.workouts.flatMap(w => w.items.map(i => i.exId)))], rows = [];
   for (const id of ids) {
-    const h = exHistory(id), rec = h.filter(x => now - new Date(x.w.date) <= 60 * D);
+    const h = exHistory(id), rec = h.filter(x => inR(x.w, r));
     if (!rec.length) continue;
-    const last = h.at(-1), cur = sessStats(last.sets);
-    const win = h.filter(x => { const a = (now - new Date(x.w.date)) / D; return a >= 28 && a <= 60; });
-    const ref = win.length ? win[0] : h[0];
+    const last = rec.at(-1), cur = sessStats(last.sets);
+    const before = h.filter(x => new Date(x.w.date) < r.from), ref = before.length ? before.at(-1) : rec[0];
     const delta = ref === last ? null : cur.best - sessStats(ref.sets).best;
-    const m30 = h.filter(x => now - new Date(x.w.date) <= 30 * D).flatMap(x => x.sets);
-    const ws = m30.filter(s => s.w), rs = m30.filter(s => s.r != null);
+    const all = rec.flatMap(x => x.sets), ws = all.filter(s => s.w), rs = all.filter(s => s.r != null);
     rows.push({ id, n: rec.length, last: last.w.date, cur, delta, avgW: ws.length ? ws.reduce((a, s) => a + s.w, 0) / ws.length : null, avgR: rs.length ? rs.reduce((a, s) => a + s.r, 0) / rs.length : null });
   }
   return rows.sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
@@ -361,9 +423,8 @@ function progRows() {
 
 function viewHome() {
   const now = new Date(), fin = finished(), map = byDay(), today = ymd(now), act = S.activeId && wk(S.activeId);
-  const wk0 = weekStart(now), inM = (w, y, m) => { const d = new Date(w.date); return d.getFullYear() === y && d.getMonth() === m; };
-  const cy = now.getFullYear(), cm = now.getMonth(), py = cm ? cy : cy - 1, pm = (cm + 11) % 12;
-  const mine = fin.filter(w => inM(w, cy, cm)), prev = fin.filter(w => inM(w, py, pm));
+  const r = period(), wk0 = weekStart(now);
+  const mine = fin.filter(w => inR(w, r)), prev = r.prev ? fin.filter(w => inR(w, r.prev)) : null;
   let html = head('Главная', null, `<button class="ibtn" data-act="go" data-to="history" aria-label="Календарь">${CAL_ICON}</button>`);
   if (act) html += `<button class="card row hot" data-act="go" data-to="workout"><div><small class="cap">Идёт тренировка</small><b>${esc(wTitle(act))}</b><small>${setCount(act)} ${plural(setCount(act), 'подход', 'подхода', 'подходов')}</small></div><span class="pill">Продолжить</span></button>`;
   // неделя
@@ -371,21 +432,14 @@ function viewHome() {
     const d = new Date(wk0); d.setDate(d.getDate() + k); const key = ymd(d), c = (map.get(key) || []).length;
     return `<div class="wsd"><span>${['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'][k]}</span><button class="${c ? 'has ' : ''}${key === today ? 'today ' : ''}${key > today ? 'fut' : ''}" data-act="wday" data-d="${key}">${d.getDate()}</button></div>`;
   }).join('') + '</div>';
-  // месяц
-  const weeks = [], first = new Date(cy, cm, 1), lastD = new Date(cy, cm + 1, 0);
-  for (let s = weekStart(first); s <= lastD; s = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7)) {
-    const e = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7);
-    weeks.push({ s, c: mine.filter(w => { const d = new Date(w.date); return d >= s && d < e; }).length, cur: +s === +wk0, lab: s.getMonth() === cm ? s.getDate() : 1 });
-  }
-  const mx = Math.max(3, ...weeks.map(x => x.c));
-  html += `<div class="card mcard"><div class="mleft"><small class="cap">Тренировок в этом месяце</small><div class="big">${mine.length}</div>
-    <small>в прошлом месяце ${prev.length} ${arrow(mine.length - prev.length)}</small></div>
-    <div class="mbars">${weeks.map(x => `<div class="mc"><div class="mb"><div class="f${x.cur ? ' cur' : ''}" style="height:${x.c ? Math.max(8, 100 * x.c / mx) : 0}%"></div></div><em>${x.lab}</em></div>`).join('')}</div></div>`;
+  html += periodBar();
+  // период: счётчик и столбики
+  const bk = buckets(r, mine), mx = Math.max(3, ...bk.map(x => x.c));
+  html += `<div class="card mcard"><div class="mleft"><small class="cap">Тренировок ${r.on}</small><div class="big">${mine.length}</div>
+    <small>${prev ? `в прошлом периоде ${prev.length} ${arrow(mine.length - prev.length)}` : `за ${r.days} ${plural(r.days, 'день', 'дня', 'дней')}`}</small></div>
+    <div class="mbars">${bk.map((x, i) => `<div class="mc"><div class="mb"><div class="f${x.cur ? ' cur' : ''}" style="height:${x.c ? Math.max(8, 100 * x.c / mx) : 0}%"></div></div><em>${labShow(i, bk.length) ? x.lab : ''}</em></div>`).join('')}</div></div>`;
   // плитки
-  const wk8 = new Date(wk0); wk8.setDate(wk8.getDate() - 49);
-  const in8 = fin.filter(w => new Date(w.date) >= wk8).length;
-  const firstW = fin.length ? weekStart(new Date(fin.reduce((a, w) => w.date < a ? w.date : a, fin[0].date))) : wk0;
-  const nw = Math.min(8, Math.max(1, Math.round((wk0 - firstW) / (7 * 864e5)) + 1));
+  const perW = mine.length / Math.max(1, r.days / 7);
   const ton = mine.reduce((a, w) => a + tonnage(w), 0);
   const msets = mine.flatMap(w => w.items.flatMap(doneSets)).filter(s => s.r != null);
   const avgR = msets.length ? msets.reduce((a, s) => a + s.r, 0) / msets.length : null;
@@ -395,9 +449,9 @@ function viewHome() {
   while (wkeys.has(ymd(k))) { streak++; k.setDate(k.getDate() - 7); }
   const lastW = sorted().find(w => w.id !== S.activeId), since = lastW ? Math.max(0, Math.floor((now - new Date(lastW.date)) / 864e5)) : null;
   html += `<div class="tiles2">
-    <div class="card t2"><small class="cap">В неделю в среднем</small><div class="big s">${fin.length ? fmtW(Math.round(in8 / nw * 10) / 10) : '—'}</div><small>за ${nw} ${plural(nw, 'неделю', 'недели', 'недель')}</small></div>
-    <div class="card t2"><small class="cap">Тоннаж за месяц</small><div class="big s">${ton ? fmtInt(ton) : '—'}</div><small>кг (вес × повторы)</small></div>
-    <div class="card t2"><small class="cap">Средние повторы</small><div class="big s">${avgR != null ? fmtW(Math.round(avgR * 10) / 10) : '—'}</div><small>на подход, за месяц</small></div>
+    <div class="card t2"><small class="cap">В неделю в среднем</small><div class="big s">${mine.length ? fmtW(Math.round(perW * 10) / 10) : '—'}</div><small>${r.on}</small></div>
+    <div class="card t2"><small class="cap">Тоннаж ${r.on}</small><div class="big s">${ton ? fmtInt(ton) : '—'}</div><small>кг (вес × повторы)</small></div>
+    <div class="card t2"><small class="cap">Средние повторы</small><div class="big s">${avgR != null ? fmtW(Math.round(avgR * 10) / 10) : '—'}</div><small>на подход, ${r.on}</small></div>
     <div class="card t2"><small class="cap">Серия</small><div class="big s">${streak || '—'}</div><small>${streak ? plural(streak, 'неделя', 'недели', 'недель') + ' подряд' : since != null ? (since ? since + ' ' + plural(since, 'день', 'дня', 'дней') + ' без тренировки' : 'сегодня тренировка') : 'недель подряд'}</small></div></div>`;
   // план
   if (!act) {
@@ -409,12 +463,13 @@ function viewHome() {
     }
   }
   // прогресс по упражнениям
-  const rows = progRows();
+  const rows = progRows(r);
+  const per = r;
   html += '<h3>Прогресс по упражнениям</h3>' + (rows.length ? `<div class="card plist">${rows.slice(0, 20).map(r => {
     const unit = r.cur.bw ? ' раз' : ' кг';
-    return `<button class="prow" data-act="prog" data-ex="${r.id}"><div class="pl"><b>${esc(ex(r.id).name)}</b><small>${r.avgW != null ? 'ср. ' + fmtW(Math.round(r.avgW * 10) / 10) + ' кг · ' : ''}${r.avgR != null ? fmtW(Math.round(r.avgR * 10) / 10) + ' повт.' : ''} за 30 дн.</small></div>
-      <div class="pr2"><b>${fmtW(r.cur.best)}${unit}</b><small>${r.delta == null ? 'первая запись' : arrow(r.delta, r.cur.bw ? '' : ' кг')}</small></div></button>`;
-  }).join('')}</div>` : '<p class="empty" style="padding:20px 10px">Здесь появятся упражнения, которые делал за последние 60 дней.</p>');
+    return `<button class="prow" data-act="prog" data-ex="${r.id}"><div class="pl"><b>${esc(ex(r.id).name)}</b><small>${r.avgW != null ? 'ср. ' + fmtW(Math.round(r.avgW * 10) / 10) + ' кг · ' : ''}${r.avgR != null ? fmtW(Math.round(r.avgR * 10) / 10) + ' повт.' : ''} ${per.on}</small></div>
+      <div class="pr2"><b>${fmtW(r.cur.best)}${unit}</b><small>${r.delta == null ? 'первая запись' : 'к началу ' + arrow(r.delta, r.cur.bw ? '' : ' кг')}</small></div></button>`;
+  }).join('')}</div>` : `<p class="empty" style="padding:20px 10px">${fin.length ? 'В этом периоде упражнений нет — расширь период.' : 'Здесь появятся упражнения, которые ты делал.'}</p>`);
   return html;
 }
 
@@ -431,45 +486,45 @@ function sessStats(sets) {
 
 function weekStart(d) { d = new Date(d); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return d; }
 function viewProgress() {
-  const all = S.workouts.filter(w => w.id !== S.activeId);
-  const now = new Date(), wk0 = weekStart(now);
-  const weeks = Array.from({ length: 12 }, (_, k) => { const s = new Date(wk0); s.setDate(s.getDate() - 7 * (11 - k)); return s; });
-  const counts = weeks.map(s => all.filter(w => { const d = new Date(w.date); const e = new Date(s); e.setDate(e.getDate() + 7); return d >= s && d < e; }).length);
-  const last30 = all.filter(w => now - new Date(w.date) < 30 * 864e5).length;
-  const exIds = [...new Set(all.flatMap(w => w.items.map(i => i.exId)))];
-  const rows = exIds.map(id => { const h = exHistory(id); return { id, n: h.length, last: h.at(-1)?.w.date || '', pr: h.length ? h.map(x => sessStats(x.sets)).reduce((a, b) => b.best > a.best ? b : a) : null }; })
-    .filter(r => r.n).sort((a, b) => b.last.localeCompare(a.last));
-  return `${head('Прогресс')}
-  <div class="tiles"><div class="tile"><b>${all.length}</b><small>всего тренировок</small></div>
-  <div class="tile"><b>${last30}</b><small>за 30 дней</small></div><div class="tile"><b>${counts[11]}</b><small>на этой неделе</small></div></div>
-  <h3>Тренировок в неделю</h3><div class="card">${bars(counts, weeks)}</div>
-  ${rows.length ? `<h3>Упражнения</h3><div class="list">${rows.map(r => `<button class="li" data-act="prog" data-ex="${r.id}"><span>${esc(ex(r.id).name)}</span>
-    <small>${r.pr.bw ? r.pr.best + ' раз' : fmtW(r.pr.best) + ' кг'} · ${r.n} трен.</small></button>`).join('')}</div>`
-      : `<p class="empty">Графики появятся после первых тренировок.</p>`}
+  const all = S.workouts.filter(w => w.id !== S.activeId), r = period();
+  const inP = all.filter(w => inR(w, r)), bk = buckets(r, inP);
+  const rows = progRows(r).sort((a, b) => b.last.localeCompare(a.last)).map(x => ({ ...x, pr: exHistory(x.id).filter(h => inR(h.w, r)).map(h => sessStats(h.sets)).reduce((a, b) => b.best > a.best ? b : a) }));
+  const bt = { d: 'по дням', w: 'по неделям', m: 'по месяцам' }[bk.mode];
+  return `${head('Прогресс')}${periodBar()}
+  <div class="tiles"><div class="tile"><b>${inP.length}</b><small>тренировок ${r.on}</small></div>
+  <div class="tile"><b>${all.length}</b><small>всего</small></div><div class="tile"><b>${inP.length ? fmtW(Math.round(inP.length / Math.max(1, r.days / 7) * 10) / 10) : '—'}</b><small>в неделю в среднем</small></div></div>
+  <h3>Тренировок ${bt}</h3><div class="card">${bars(bk)}</div>
+  ${rows.length ? `<h3>Упражнения ${r.on}</h3><div class="list">${rows.map(x => `<button class="li" data-act="prog" data-ex="${x.id}"><span>${esc(ex(x.id).name)}</span>
+    <small>${x.pr.bw ? x.pr.best + ' раз' : fmtW(x.pr.best) + ' кг'} · ${x.n} трен.</small></button>`).join('')}</div>`
+      : `<p class="empty">${all.length ? 'В этом периоде тренировок нет — расширь период.' : 'Графики появятся после первых тренировок.'}</p>`}
   <button class="btn" data-act="go" data-to="exercises">База упражнений</button>`;
 }
-function bars(vals, weeks) {
-  const W = 340, H = 110, mx = Math.max(4, ...vals), bw = (W - 20) / vals.length;
-  return `<svg viewBox="0 0 ${W} ${H}" class="chart">${vals.map((v, i) => {
-    const h = (H - 30) * v / mx, x = 10 + i * bw;
-    return `<rect x="${x + 3}" y="${H - 20 - h}" width="${bw - 6}" height="${Math.max(h, 1.5)}" rx="3" opacity="${i === vals.length - 1 ? 1 : .55}"/>${v ? `<text x="${x + bw / 2}" y="${H - 24 - h}" text-anchor="middle">${v}</text>` : ''}`;
-  }).join('')}<text x="10" y="${H - 4}">${fmtShort(weeks[0])}</text><text x="${W - 10}" y="${H - 4}" text-anchor="end">эта неделя</text></svg>`;
+function bars(bk) {
+  const W = 340, H = 110, vals = bk.map(b => b.c), mx = Math.max(4, ...vals), bw = (W - 20) / vals.length;
+  const f = bk[0], first = bk.mode === 'm' ? `${MON[f.s.getMonth()]} ${f.s.getFullYear()}` : fmtDM(f.s < period().from ? period().from : f.s);
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart">${bk.map((b, i) => {
+    const v = b.c, h = (H - 30) * v / mx, x = 10 + i * bw;
+    return `<rect x="${x + 3}" y="${H - 20 - h}" width="${Math.max(bw - 6, 2)}" height="${Math.max(h, 1.5)}" rx="3" opacity="${b.cur ? 1 : .55}"/>${v && bk.length <= 16 ? `<text x="${x + bw / 2}" y="${H - 24 - h}" text-anchor="middle">${v}</text>` : ''}`;
+  }).join('')}<text x="10" y="${H - 4}">${first}</text>${bk.at(-1).cur ? `<text x="${W - 10}" y="${H - 4}" text-anchor="end">сейчас</text>` : ''}</svg>`;
 }
 
 let progMetric = 'best', progSel = null;
 function viewExProgress(id) {
-  const e = ex(id), h = exHistory(id);
-  if (!h.length) return `${head(esc(e.name), 'progress')}<p class="empty">Пока нет выполненных подходов.</p>`;
+  const e = ex(id), hAll = exHistory(id), r = period(), h = hAll.filter(x => inR(x.w, r));
+  if (!hAll.length) return `${head(esc(e.name), 'progress')}<p class="empty">Пока нет выполненных подходов.</p>`;
+  const back = `<button class="btn" data-act="go" data-to="progress">← Ко всем упражнениям</button>`;
+  if (!h.length) return `${head(esc(e.name), 'progress')}${periodBar()}<p class="empty">В этом периоде подходов нет.<br>Расширь период — всего записей: ${hAll.length}.</p>${back}`;
   const st = h.map(x => ({ ...sessStats(x.sets), date: x.w.date }));
   const bw = st.every(s => s.bw);
   const metrics = bw ? [['best', 'Повторы'], ['reps', 'Сумма повт.']] : [['best', 'Рабочий вес'], ['orm', '1ПМ ≈'], ['vol', 'Объём']];
   if (!metrics.some(m => m[0] === progMetric)) progMetric = 'best';
   const unit = bw ? 'раз' : progMetric === 'vol' ? 'кг·раз' : 'кг';
   const pr = st.reduce((a, b) => b.best > a.best ? b : a), prOrm = Math.max(...st.map(s => s.orm));
+  const prAll = hAll.map(x => ({ ...sessStats(x.sets), date: x.w.date })).reduce((a, b) => b.best > a.best ? b : a);
   let si = h.findIndex(x => x.w.id === progSel); if (si < 0) si = h.length - 1;
   const sel = h[si], ss = st[si], yv = ss[progMetric], rv = Math.round(yv * 10) / 10;
-  return `${head(esc(e.name), 'progress')}
-  <div class="tiles"><div class="tile"><b>${bw ? pr.best : fmtW(pr.best)}</b><small>рекорд, ${bw ? 'раз' : 'кг'}</small></div>
+  return `${head(esc(e.name), 'progress')}${periodBar()}
+  <div class="tiles"><div class="tile"><b>${bw ? pr.best : fmtW(pr.best)}</b><small>рекорд ${r.on}, ${bw ? 'раз' : 'кг'}</small></div>
   <div class="tile"><b>${bw ? '—' : fmtW(Math.round(prOrm * 2) / 2)}</b><small>1ПМ ≈, кг</small></div><div class="tile"><b>${h.length}</b><small>тренировок</small></div></div>
   <div class="seg">${metrics.map(([k, n]) => `<button class="${k === progMetric ? 'on' : ''}" data-act="metric" data-m="${k}" data-ex="${id}">${n}</button>`).join('')}</div>
   <div class="card">${chart(h.map((x, i) => ({ id: x.w.id, x: fmtShort(x.w.date), y: st[i][progMetric] })), unit, si)}</div>
@@ -477,9 +532,9 @@ function viewExProgress(id) {
     <div class="big s">${fmtW(rv)} <span class="unit">${unit}</span></div><small>${metrics.find(m => m[0] === progMetric)[1]}</small>
     <div class="selsets">${sel.sets.map((s, j) => `<span class="sp">${j + 1}. ${setStr(s)}</span>`).join('')}</div>
     <button class="btn" data-act="open" data-w="${sel.w.id}">Открыть тренировку</button></div>
-  <p class="muted" style="font-size:13px">Рекорд: <span class="pr">${setStr(pr.top)}</span> (${fmtShort(pr.date)}). 1ПМ считается по формуле Эпли — ориентир, а не замер.</p>
-  <h3>Все подходы</h3><div class="card">${[...h].reverse().map(x => `<div class="sess${x.w.id === sel.w.id ? ' sel' : ''}"><span>${fmtShort(x.w.date)}</span><div>${x.sets.map(setStr).join(' · ')}</div></div>`).join('')}</div>
-  <button class="btn" data-act="go" data-to="progress">← Ко всем упражнениям</button>`;
+  <p class="muted" style="font-size:13px">Рекорд ${r.on}: <span class="pr">${setStr(pr.top)}</span> (${fmtShort(pr.date)}).${hAll.length > h.length ? ` За всё время: <span class="pr">${setStr(prAll.top)}</span> (${fmtShort(prAll.date)}).` : ''} 1ПМ считается по формуле Эпли — ориентир, а не замер.</p>
+  <h3>Все подходы ${r.on}</h3><div class="card">${[...h].reverse().map(x => `<div class="sess${x.w.id === sel.w.id ? ' sel' : ''}"><span>${fmtShort(x.w.date)}</span><div>${x.sets.map(setStr).join(' · ')}</div></div>`).join('')}</div>
+  ${back}`;
 }
 function chart(pts, unit, si) {
   if (pts.length < 2) return `<p class="muted" style="margin:6px 0">График появится со второй тренировки. Сейчас: ${fmtW(Math.round(pts[0].y * 10) / 10)} ${unit}</p>`;
@@ -755,6 +810,8 @@ function render() {
   $('#view').innerHTML = html;
   const tab = p === 'workout' && a && a !== S.activeId ? 'history' : p === 'plan' ? 'workout' : p === 'exercises' ? 'settings' : ['workout', 'history', 'progress', 'settings'].includes(p) ? p : 'home';
   document.querySelectorAll('.tabs a').forEach(t => t.classList.toggle('on', t.dataset.tab === tab));
+  const pc = document.querySelector('.pchips'), on = pc && pc.querySelector('.on');
+  if (on) pc.scrollLeft = on.offsetLeft - (pc.clientWidth - on.offsetWidth) / 2;
   renderTimer(true); keepAwake(!!S.activeId);
 }
 
@@ -794,6 +851,9 @@ document.addEventListener('click', e => {
     case 'wday': { const l = finished().filter(x => dateVal(x.date) === d.d); if (l.length === 1) return go('workout/' + l[0].id); if (l.length) return daySheet(d.d); return; }
     case 'addday': return addDay(d.d);
     case 'pt': progSel = d.w; return render();
+    case 'period': S.settings.period = { k: d.k }; save(); return render();
+    case 'pcustom': return periodSheet();
+    case 'papply': return periodApply();
     case 'theme': S.settings.theme = d.v; save(); applyTheme(); return render();
     case 'go': return go(d.to);
     case 'pick': return openPicker(d.w);
